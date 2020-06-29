@@ -110,7 +110,7 @@ mod tests {
                 input_is_le: bool,
                 bit_size: Option<usize>,
             ) -> Result<(&BitSlice<Msb0, u8>, u8), DekuError> {
-                let (rest, value) = u8::read(rest, input_is_le, bit_size, None)?;
+                let (rest, value) = u8::read(rest, input_is_le, bit_size, None, vec![])?;
                 Ok((rest, value + 1))
             }
 

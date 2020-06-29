@@ -7,16 +7,18 @@ use super::{DekuRead, DekuWrite};
 use crate::error::DekuError;
 use bitvec::prelude::*;
 pub use deku_derive::*;
+use core::any::Any;
 
 macro_rules! ImplDekuSliceTraits {
     ($typ:ty, $count:expr) => {
         impl DekuRead for [$typ; $count] {
-            fn read(
-                input: &BitSlice<Msb0, u8>,
+            fn read<'a >(
+                input: &'a BitSlice<Msb0, u8>,
                 input_is_le: bool,
                 bit_size: Option<usize>,
                 count: Option<usize>,
-            ) -> Result<(&BitSlice<Msb0, u8>, Self), DekuError>
+                _context: Vec<&dyn Any>,
+            ) -> Result<(&'a BitSlice<Msb0, u8>, Self), DekuError>
             where
                 Self: Sized,
             {
@@ -25,7 +27,7 @@ macro_rules! ImplDekuSliceTraits {
                 let mut slice: [$typ; $count] = Default::default();
                 let mut rest = input;
                 for i in 0..$count {
-                    let (new_rest, value) = <$typ>::read(rest, input_is_le, bit_size, count)?;
+                    let (new_rest, value) = <$typ>::read(rest, input_is_le, bit_size, count, vec![])?;
                     slice[i] = value;
                     rest = new_rest;
                 }
@@ -545,7 +547,7 @@ mod tests {
     ) {
         let bit_slice = input.bits::<Msb0>();
 
-        let (rest, res_read) = <[u16; 2]>::read(bit_slice, input_is_le, bit_size, count).unwrap();
+        let (rest, res_read) = <[u16; 2]>::read(bit_slice, input_is_le, bit_size, count, vec![]).unwrap();
         assert_eq!(expected, res_read);
         assert_eq!(expected_rest, rest);
     }

@@ -72,7 +72,13 @@ fn emit_struct(input: &DekuReceiver) -> Result<TokenStream, darling::Error> {
         }
 
         impl #imp DekuRead for #ident #wher {
-            fn read(input: &BitSlice<Msb0, u8>, _input_is_le: bool, _bit_size: Option<usize>, _count: Option<usize>) -> Result<(&BitSlice<Msb0, u8>, Self), DekuError> {
+            fn read<'a>(
+                input: &'a BitSlice<Msb0, u8>,
+                _input_is_le: bool,
+                _bit_size: Option<usize>,
+                _count: Option<usize>,
+                _context: Vec<&core::any::Any>
+            ) -> Result<(&'a BitSlice<Msb0, u8>, Self), DekuError> {
                 use core::convert::TryFrom;
                 let mut rest = input;
 
@@ -104,12 +110,16 @@ fn emit_enum(input: &DekuReceiver) -> Result<TokenStream, darling::Error> {
 
     let id_type = input.id_type.as_ref().expect("expected `id_type` on enum");
     let id_is_le_bytes = input.endian == EndianNess::Little;
-    let id_bit_size = super::option_as_literal_token(input.id_bits);
+    let id_bit_size = if let Some(id_bits) = input.id_bits {
+        quote! { DekuBitSize(#id_bits).as_any(), }
+    } else {
+        quote! {}
+    };
 
     let variant_id_read = {
         quote! {
             {
-                let (new_rest, variant_id) = #id_type :: read (rest, #id_is_le_bytes, #id_bit_size, None)?;
+                let (new_rest, variant_id) = #id_type::read(rest, #id_is_le_bytes, None, None, vec![#id_bit_size])?;
                 rest = new_rest;
 
                 variant_id
@@ -194,7 +204,13 @@ fn emit_enum(input: &DekuReceiver) -> Result<TokenStream, darling::Error> {
         }
 
         impl #imp DekuRead for #ident #wher {
-            fn read(input: &BitSlice<Msb0, u8>, _input_is_le: bool, _bit_size: Option<usize>, _count: Option<usize>) -> Result<(&BitSlice<Msb0, u8>, Self), DekuError> {
+            fn read<'a>(
+                input: &'a BitSlice<Msb0, u8>,
+                _input_is_le: bool,
+                _bit_size: Option<usize>,
+                _count: Option<usize>,
+                _context: Vec<&core::any::Any>
+            ) -> Result<(&'a BitSlice<Msb0, u8>, Self), DekuError> {
                 use core::convert::TryFrom;
                 let mut rest = input;
 
@@ -260,9 +276,9 @@ fn emit_field_read(
     let field_read_func = if field_reader.is_some() {
         quote! { #field_reader }
     } else if field_count.is_some() {
-        quote! { DekuRead::read(rest, input_is_le, field_bits, Some(usize::try_from(#field_count)?)) }
+        quote! { DekuRead::read(rest, input_is_le, field_bits, Some(usize::try_from(#field_count)?), vec![]) }
     } else {
-        quote! { DekuRead::read(rest, input_is_le, field_bits, None) }
+        quote! { DekuRead::read(rest, input_is_le, field_bits, None, vec![]) }
     };
 
     let field_read = quote! {

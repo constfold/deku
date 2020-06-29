@@ -179,6 +179,7 @@ pub mod error;
 pub mod prelude;
 mod slice_impls;
 use crate::error::DekuError;
+use core::any::Any;
 
 /// "Reader" trait: read bits and construct type
 pub trait DekuRead {
@@ -190,12 +191,13 @@ pub trait DekuRead {
     /// `None` otherwise
     /// * **count** - Number of elements to read for container, Some if `count` attribute
     /// is provided, else None
-    fn read(
-        input: &BitSlice<Msb0, u8>,
+    fn read<'a>(
+        input: &'a BitSlice<Msb0, u8>,
         input_is_le: bool,
         bit_size: Option<usize>,
         count: Option<usize>,
-    ) -> Result<(&BitSlice<Msb0, u8>, Self), DekuError>
+        _context: Vec<&dyn Any>,
+    ) -> Result<(&'a BitSlice<Msb0, u8>, Self), DekuError>
     where
         Self: Sized;
 }
@@ -236,18 +238,37 @@ pub trait DekuUpdate {
     fn update(&mut self) -> Result<(), DekuError>;
 }
 
+pub struct DekuBitSize(pub usize);
+
+impl DekuBitSize {
+    pub fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 macro_rules! ImplDekuTraits {
     ($typ:ty) => {
         impl DekuRead for $typ {
-            fn read(
-                input: &BitSlice<Msb0, u8>,
+            fn read<'a>(
+                input: &'a BitSlice<Msb0, u8>,
                 input_is_le: bool,
                 bit_size: Option<usize>,
                 count: Option<usize>,
-            ) -> Result<(&BitSlice<Msb0, u8>, Self), DekuError> {
+                context: Vec<&dyn Any>,
+            ) -> Result<(&'a BitSlice<Msb0, u8>, Self), DekuError> {
                 assert!(count.is_none(), "Dev error: `count` should always be None");
 
                 let max_type_bits: usize = core::mem::size_of::<$typ>() * 8;
+
+                let mut bit_size = bit_size; // TODO: None
+                // let mut count = None;
+                // let mut input_is_le = None;
+
+                for ctx in context {
+                    bit_size = ctx.downcast_ref::<DekuBitSize>().map(|v| v.0);
+                    // count = ctx.downcast_ref::<DekuCount>().map(|v| v.0);
+                    // input_is_le = ctx.downcast_ref::<DekuInputIsLe>().map(|v| v.0);
+                }
 
                 let bit_size = match bit_size {
                     None => max_type_bits,
@@ -259,6 +280,8 @@ macro_rules! ImplDekuTraits {
                     }
                     Some(s) => s,
                 };
+
+
                 if input.len() < bit_size {
                     return Err(DekuError::Parse(format!(
                         "not enough data: expected {} got {}",
@@ -401,12 +424,13 @@ macro_rules! ImplDekuTraits {
 }
 
 impl<T: DekuRead> DekuRead for Vec<T> {
-    fn read(
-        input: &BitSlice<Msb0, u8>,
+    fn read<'a>(
+        input: &'a BitSlice<Msb0, u8>,
         input_is_le: bool,
         bit_size: Option<usize>,
         count: Option<usize>,
-    ) -> Result<(&BitSlice<Msb0, u8>, Self), DekuError>
+        _context: Vec<&dyn Any>,
+    ) -> Result<(&'a BitSlice<Msb0, u8>, Self), DekuError>
     where
         Self: Sized,
     {
@@ -415,7 +439,7 @@ impl<T: DekuRead> DekuRead for Vec<T> {
         let mut res = Vec::with_capacity(count);
         let mut rest = input;
         for _i in 0..count {
-            let (new_rest, val) = <T>::read(rest, input_is_le, bit_size, None)?;
+            let (new_rest, val) = <T>::read(rest, input_is_le, bit_size, None, vec![])?;
             res.push(val);
             rest = new_rest;
         }
@@ -458,16 +482,17 @@ ImplDekuTraits!(f64);
 
 #[cfg(feature = "std")]
 impl DekuRead for Ipv4Addr {
-    fn read(
-        input: &BitSlice<Msb0, u8>,
+    fn read<'a>(
+        input: &'a BitSlice<Msb0, u8>,
         input_is_le: bool,
         bit_size: Option<usize>,
         count: Option<usize>,
-    ) -> Result<(&BitSlice<Msb0, u8>, Self), DekuError>
+        _context: Vec<&dyn Any>,
+    ) -> Result<(&'a BitSlice<Msb0, u8>, Self), DekuError>
     where
         Self: Sized,
     {
-        let (rest, ip) = u32::read(input, input_is_le, bit_size, count)?;
+        let (rest, ip) = u32::read(input, input_is_le, bit_size, count, vec![])?;
         Ok((rest, ip.into()))
     }
 }
@@ -486,16 +511,17 @@ impl DekuWrite for Ipv4Addr {
 
 #[cfg(feature = "std")]
 impl DekuRead for Ipv6Addr {
-    fn read(
-        input: &BitSlice<Msb0, u8>,
+    fn read<'a>(
+        input: &'a BitSlice<Msb0, u8>,
         input_is_le: bool,
         bit_size: Option<usize>,
         count: Option<usize>,
-    ) -> Result<(&BitSlice<Msb0, u8>, Self), DekuError>
+        _context: Vec<&dyn Any>,
+    ) -> Result<(&'a BitSlice<Msb0, u8>, Self), DekuError>
     where
         Self: Sized,
     {
-        let (rest, ip) = u128::read(input, input_is_le, bit_size, count)?;
+        let (rest, ip) = u128::read(input, input_is_le, bit_size, count, vec![])?;
         Ok((rest, ip.into()))
     }
 }
@@ -544,7 +570,7 @@ mod tests {
             fn $test_name() {
                 let input = $input;
                 let bit_slice = input.bits::<Msb0>();
-                let (_rest, res_read) = <$typ>::read(bit_slice, IS_LE, None, None).unwrap();
+                let (_rest, res_read) = <$typ>::read(bit_slice, IS_LE, None, None, vec![]).unwrap();
                 assert_eq!($expected, res_read);
 
                 let res_write = res_read.write(IS_LE, None).unwrap().into_vec();
@@ -642,7 +668,7 @@ mod tests {
     ) {
         let bit_slice = input.bits::<Msb0>();
 
-        let (rest, res_read) = u32::read(bit_slice, input_is_le, bit_size, count).unwrap();
+        let (rest, res_read) = u32::read(bit_slice, input_is_le, bit_size, count, vec![]).unwrap();
         assert_eq!(expected, res_read);
         assert_eq!(expected_rest, rest);
     }
@@ -673,7 +699,7 @@ mod tests {
     ) {
         let bit_slice = input.bits::<Msb0>();
 
-        let (rest, res_read) = u32::read(bit_slice, is_le, bit_size, None).unwrap();
+        let (rest, res_read) = u32::read(bit_slice, is_le, bit_size, None, vec![]).unwrap();
         assert_eq!(expected, res_read);
         assert_eq!(expected_rest, rest);
 
@@ -709,7 +735,7 @@ mod tests {
     ) {
         let bit_slice = input.bits::<Msb0>();
 
-        let (rest, res_read) = Vec::<u8>::read(bit_slice, input_is_le, bit_size, count).unwrap();
+        let (rest, res_read) = Vec::<u8>::read(bit_slice, input_is_le, bit_size, count, vec![]).unwrap();
         assert_eq!(expected, res_read);
         assert_eq!(expected_rest, rest);
     }
@@ -742,7 +768,7 @@ mod tests {
     ) {
         let bit_slice = input.bits::<Msb0>();
 
-        let (rest, res_read) = Vec::<u16>::read(bit_slice, is_le, bit_size, count).unwrap();
+        let (rest, res_read) = Vec::<u16>::read(bit_slice, is_le, bit_size, count, vec![]).unwrap();
         assert_eq!(expected, res_read);
         assert_eq!(expected_rest, rest);
 
@@ -766,7 +792,7 @@ mod tests {
     ) {
         let bit_slice = input.bits::<Msb0>();
 
-        let (rest, res_read) = Ipv4Addr::read(bit_slice, is_le, bit_size, count).unwrap();
+        let (rest, res_read) = Ipv4Addr::read(bit_slice, is_le, bit_size, count, vec![]).unwrap();
         assert_eq!(expected, res_read);
         assert_eq!(expected_rest, rest);
 
@@ -792,7 +818,7 @@ mod tests {
     ) {
         let bit_slice = input.bits::<Msb0>();
 
-        let (rest, res_read) = Ipv6Addr::read(bit_slice, is_le, bit_size, count).unwrap();
+        let (rest, res_read) = Ipv6Addr::read(bit_slice, is_le, bit_size, count, vec![]).unwrap();
         assert_eq!(expected, res_read);
         assert_eq!(expected_rest, rest);
 
